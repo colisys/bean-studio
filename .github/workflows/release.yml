@@ -1,0 +1,183 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Release
+
+# Publish a release from the artifacts already produced by the "Build Apps"
+# workflow for the target commit. No rebuild is performed, so tagging later
+# does not invalidate or change the built binaries.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v1.0.0'
+        required: true
+        type: string
+      commit:
+        description: 'Commit SHA to release (optional; defaults to the tag commit or current HEAD)'
+        required: false
+        type: string
+      create_tag:
+        description: 'Create the tag if it does not exist'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Publish release from cached build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag, commit and build run
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_COMMIT: ${{ inputs.commit }}
+          INPUT_CREATE_TAG: ${{ inputs.create_tag }}
+          EVENT_REF_TYPE: ${{ github.ref_type }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${INPUT_TAG:-}" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "$EVENT_REF_TYPE" = "tag" ]; then
+            TAG="$EVENT_REF_NAME"
+          else
+            TAG=""
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "::error::A release tag is required."
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid tag '$TAG'. Expected vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+          # Peel annotated tags to the target commit; lightweight tags have no ^{} entry.
+          EXISTING_TAG_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | cut -f1)"
+          if [ -z "$EXISTING_TAG_SHA" ]; then
+            EXISTING_TAG_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | cut -f1)"
+          fi
+          TAG_EXISTS=false
+          if [ -n "$EXISTING_TAG_SHA" ]; then
+            TAG_EXISTS=true
+          fi
+
+          if [ -n "${INPUT_COMMIT:-}" ]; then
+            COMMIT="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${INPUT_COMMIT}" --jq .sha)"
+          elif [ -n "$EXISTING_TAG_SHA" ]; then
+            COMMIT="$EXISTING_TAG_SHA"
+          else
+            COMMIT="$EVENT_SHA"
+          fi
+
+          if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Could not resolve a full commit SHA (got '$COMMIT')."
+            exit 1
+          fi
+
+          if [ "$TAG_EXISTS" = "true" ] && [ "$EXISTING_TAG_SHA" != "$COMMIT" ]; then
+            echo "::error::Tag $TAG already points to $EXISTING_TAG_SHA, not $COMMIT."
+            exit 1
+          fi
+          if [ "$TAG_EXISTS" = "false" ] && [ "${INPUT_CREATE_TAG:-true}" != "true" ]; then
+            echo "::error::Tag $TAG does not exist and create_tag is false."
+            exit 1
+          fi
+
+          RUN_ID="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow build.yml \
+            --commit "$COMMIT" \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')"
+          if [ -z "$RUN_ID" ]; then
+            echo "::error::No successful Build Apps run found for commit $COMMIT. Wait for the main build to finish, then retry."
+            exit 1
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "commit=$COMMIT"
+            echo "run_id=$RUN_ID"
+            echo "tag_exists=$TAG_EXISTS"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved $TAG -> $COMMIT using build run $RUN_ID"
+
+      - name: Download cached build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+          merge-multiple: true
+
+      - name: Verify cached artifacts
+        run: |
+          set -euo pipefail
+          for ext in AppImage dmg apk ipa; do
+            if ! find dist -maxdepth 1 -name "*.${ext}" -print -quit | grep -q .; then
+              echo "::error::No .${ext} artifact found in build run ${{ steps.resolve.outputs.run_id }}."
+              exit 1
+            fi
+          done
+          ls -lh dist
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create tag if missing
+        if: steps.resolve.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          COMMIT: ${{ steps.resolve.outputs.commit }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" \
+            -f sha="${COMMIT}"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          name: ${{ steps.resolve.outputs.tag }}
+          files: dist/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(steps.resolve.outputs.tag, '-') }}
+          body: |
+            Release `${{ steps.resolve.outputs.tag }}`.
+
+            Commit: `${{ steps.resolve.outputs.commit }}`
+            Source build: [run ${{ steps.resolve.outputs.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ steps.resolve.outputs.run_id }})
+
+            This release reuses the cached build artifacts for the commit; no rebuild was performed.
+
+            - **Linux**: AppImage x86_64 (requires GTK 3)
+            - **macOS**: DMG (unsigned, not notarized — right-click → Open on first launch)
+            - **Android**: APK (signed with the debug keystore)
+            - **iOS**: unsigned IPA (sign with your own certificate/profile before installing)

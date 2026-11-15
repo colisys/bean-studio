@@ -76,15 +76,18 @@ APPIMAGETOOL=/path/to/appimagetool \
 
 AppImage 内置 Flutter 运行时与插件，但仍使用宿主机的 GTK 3 / GLib；主流桌面环境
 默认已安装。产物写入 `dist/`。若系统缺少 FUSE 2，可用
-`./BeadStudio-*.AppImage --appimage-extract-and-run` 启动。
+`./BeadStudio-*.AppImage --appimage-extract-and-run` 启动。从 GitHub Release 下载后若没有
+执行权限，先运行 `chmod +x BeadStudio-*.AppImage`。
 
-## GitHub Actions 多平台构建
+## GitHub Actions 多平台构建与发布
 
-工作流位于 `.github/workflows/build.yml`，在以下情况运行：
+工作流分成两个：
 
-- 推送到 `main` / `master`
-- 推送 `v*` 标签
-- 手动触发 `workflow_dispatch`
+- `.github/workflows/build.yml`（Build Apps）：推送到 `main` / `master` 或手动触发时构建四个
+  平台并上传 Actions artifact，产物保留 **90 天**。这个工作流不发布 Release。
+- `.github/workflows/release.yml`（Release）：推送 `v*` 标签时自动运行（标签提交需包含
+  该工作流），也可手动 `workflow_dispatch`，从对应提交最近一次成功的 Build Apps 运行中
+  下载产物并创建 GitHub Release。**发布不会重新编译。**
 
 构建产物：
 
@@ -95,18 +98,42 @@ AppImage 内置 Flutter 运行时与插件，但仍使用宿主机的 GTK 3 / GL
 | Android | `BeadStudio-<版本>-android.apk` | debug keystore 签名，可直接安装 |
 | iOS | `BeadStudio-<版本>-ios-unsigned.ipa` | 未签名，需自行用证书/描述文件重签 |
 
+### 补标签 / 补发布
+
+先等 `main` 的 Build Apps 构建成功，然后任选一种方式：
+
+1. 在 Actions 中手动运行 **Release**，填写 `tag`（如 `v1.0.0`），`commit` 可留空
+   （当前 `main` HEAD）或填入旧提交 SHA，保持 `create_tag=true`。
+2. 直接打并推送标签（仅当标签指向的提交包含 `release.yml` 时会自动触发；更老的
+   提交请用方式 1）：
+
+   ```bash
+   git tag v1.0.0 <commit>
+   git push origin v1.0.0
+   ```
+
+Release 会按提交查找最近一次成功的 Build Apps 运行，下载四个平台的 artifact，生成
+`SHA256SUMS`，并在需要时创建标签。若该提交没有成功构建，或 artifact 已超过 90 天，
+发布任务会报错；此时先在该 ref 上手动运行一次 Build Apps，再重新运行 Release。
+
+补标签发布复用原构建，因此产物版本仍是构建时的 `1.0.0+g<sha>`，标签不会改变已编译
+产物。如果希望产物版本等于标签的基础版本，请在该标签 ref 上手动运行 Build Apps，再
+运行 Release。
+
+### 版本号
+
 版本号由基础版本和短 git 提交哈希组成，例如 `1.0.0+g1a2b3c4`；基础版本默认取自
-`pubspec.yaml`，打 `v1.2.3` 形式的标签时以标签为准。CI 运行号用作 Android
-`versionCode` / Apple `CFBundleVersion`。应用内“关于”对话框、首页页脚、Android 的 `versionName`
-和产物文件名都会带上哈希。版本解析逻辑在
+`pubspec.yaml`。若手动在 `v1.2.3` 标签 ref 上运行 Build Apps，则以标签版本为准。CI
+运行号用作 Android `versionCode` / Apple `CFBundleVersion`。应用内“关于”对话框、
+首页页脚、Android 的 `versionName` 和产物文件名都会带上哈希。版本解析逻辑在
 `.github/actions/resolve-version/action.yml`。
 
 iOS / macOS 的 `CFBundleShortVersionString` 按 Apple 规范保持纯数字版本，哈希通过
 应用内版本、`versionName` 和产物文件名体现。DMG 的 CPU 架构跟随
 `macos-latest` runner（当前通常为 arm64）。
 
-每次构建都会上传 Actions artifact。推送 `v*` 标签时，`release` job 会自动创建
-GitHub Release，附带四个平台的安装包和 `SHA256SUMS`。
+GitHub Release 会把四个平台的构建产物和 `SHA256SUMS` 一并保存，因此发布后的文件不受
+Actions artifact 90 天保留期限制。
 
 > iOS 的未签名 IPA 和 macOS 的未公证 DMG 不能直接通过系统默认安全策略；iOS 需要
 > 使用 AltStore / Sideloadly / 自己的签名证书处理，macOS 用户可以右键打开或在
@@ -161,7 +188,9 @@ lib/
   screens/                        # 主页、编辑器、图片导入、摄像头拾色
   widgets/                        # 画布、色板、真彩色取色器、导出对话框
 packaging/linux/                  # AppImage 的 AppRun、desktop 和打包脚本
-.github/                          # 多平台构建、版本解析、自动 Release
+.github/workflows/build.yml       # 主分支构建并缓存四平台产物
+.github/workflows/release.yml     # 标签/手动发布，复用缓存产物
+.github/actions/resolve-version/  # 版本号解析
 ```
 
 ## 许可证
