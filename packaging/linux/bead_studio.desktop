@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Desktop Entry]
+Type=Application
+Name=拼豆工坊
+Name[en]=Bead Studio
+GenericName=Perler bead pattern editor
+Comment=拼豆图案编辑器：导入图片、匹配常用色号、导出分享图纸。
+Exec=bead_studio
+Icon=bead_studio
+Terminal=false
+Categories=Graphics;Education;
+Keywords=perler;hama;bead;pixel;拼豆;
+StartupNotify=true
+StartupWMClass=org.beadstudio.bead_studio
+X-AppImage-Version=@APP_VERSION@

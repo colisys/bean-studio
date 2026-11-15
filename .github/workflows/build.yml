@@ -1,0 +1,237 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Build Apps
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: build-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+
+jobs:
+  linux-appimage:
+    name: Linux AppImage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - uses: ./.github/actions/resolve-version
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libstdc++-12-dev
+
+      - name: Build Linux release
+        run: |
+          flutter config --enable-linux-desktop
+          flutter pub get
+          flutter build linux --release \
+            --dart-define=APP_VERSION="$APP_VERSION" \
+            --dart-define=GIT_COMMIT="$SHORT_SHA"
+
+      - name: Fetch appimagetool
+        run: |
+          mkdir -p tools
+          curl -fsSL -o tools/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x tools/appimagetool
+
+      - name: Package AppImage
+        env:
+          APPIMAGETOOL: ${{ github.workspace }}/tools/appimagetool
+        run: |
+          mkdir -p dist
+          ./packaging/linux/build_appimage.sh \
+            "dist/BeadStudio-${APP_VERSION}-linux-x86_64.AppImage"
+
+      - name: Verify AppImage payload
+        run: |
+          APPIMAGE="$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)"
+          "$APPIMAGE" --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+          test -x squashfs-root/usr/lib/bead_studio/bead_studio
+          rm -rf squashfs-root
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  macos-dmg:
+    name: macOS DMG
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - uses: ./.github/actions/resolve-version
+
+      - name: Build macOS release
+        run: |
+          flutter config --enable-macos-desktop
+          flutter pub get
+          flutter build macos --release \
+            --build-name "$BASE_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --dart-define=APP_VERSION="$APP_VERSION" \
+            --dart-define=GIT_COMMIT="$SHORT_SHA"
+
+      - name: Package DMG
+        run: |
+          APP_PATH="$(ls -d build/macos/Build/Products/Release/*.app | grep -v Tests | head -n 1)"
+          test -d "$APP_PATH"
+          mkdir -p dist/dmg
+          cp -R "$APP_PATH" "dist/dmg/Bead Studio.app"
+          ln -s /Applications "dist/dmg/Applications"
+          ARCH="$(uname -m)"
+          DMG="dist/BeadStudio-${APP_VERSION}-macos-${ARCH}.dmg"
+          hdiutil create \
+            -volname "Bead Studio ${APP_VERSION}" \
+            -srcfolder dist/dmg \
+            -ov -format UDZO "$DMG"
+          hdiutil verify "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  android-apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - uses: ./.github/actions/resolve-version
+
+      - name: Build APK
+        run: |
+          flutter pub get
+          flutter build apk --release \
+            --build-name "$APP_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --dart-define=APP_VERSION="$APP_VERSION" \
+            --dart-define=GIT_COMMIT="$SHORT_SHA"
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/BeadStudio-${APP_VERSION}-android.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  ios-ipa:
+    name: iOS unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - uses: ./.github/actions/resolve-version
+
+      - name: Build unsigned iOS app
+        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign \
+            --build-name "$BASE_VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --dart-define=APP_VERSION="$APP_VERSION" \
+            --dart-define=GIT_COMMIT="$SHORT_SHA"
+
+      - name: Package unsigned IPA
+        run: |
+          test -d build/ios/iphoneos/Runner.app
+          rm -rf Payload
+          mkdir -p Payload dist
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload \
+            "dist/BeadStudio-${APP_VERSION}-ios-unsigned.ipa"
+          unzip -t "dist/BeadStudio-${APP_VERSION}-ios-unsigned.ipa" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: dist/*.ipa
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux-appimage, macos-dmg, android-apk, ios-ipa]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          ls -lh
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            Automated multi-platform build for `${{ github.ref_name }}`.
+
+            Commit: `${{ github.sha }}`
+
+            - **Linux**: AppImage x86_64 (requires GTK 3 on the host)
+            - **macOS**: DMG (unsigned, not notarized — right-click → Open on first launch)
+            - **Android**: APK (signed with the debug keystore)
+            - **iOS**: unsigned IPA (sign with your own certificate/profile before installing)

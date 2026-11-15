@@ -1,0 +1,35 @@
+{
+    "name": "拼豆工坊 · Bead Studio",
+    "short_name": "拼豆工坊",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#FBF7EF",
+    "theme_color": "#E85D75",
+    "description": "拼豆图案编辑器：导入图片、匹配常用色号、导出分享图纸。",
+    "orientation": "any",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
