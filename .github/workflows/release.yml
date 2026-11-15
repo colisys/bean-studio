@@ -179,5 +179,5 @@ jobs:
 
             - **Linux**: AppImage x86_64 (requires GTK 3)
             - **macOS**: DMG (unsigned, not notarized — right-click → Open on first launch)
-            - **Android**: APK (signed with the debug keystore)
+            - **Android**: APK (release-signed when Android signing secrets are configured; otherwise debug-signed)
             - **iOS**: unsigned IPA (sign with your own certificate/profile before installing)
