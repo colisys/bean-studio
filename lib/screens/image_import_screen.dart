@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:image/image.dart' as img;
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../data/palettes.dart';
@@ -26,6 +26,14 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
   String _sourceName = '导入作品';
 
   int _width = 48;
+  int _height = 48;
+  bool _linkedToSource = true;
+  late final TextEditingController _widthController = TextEditingController(
+    text: '48',
+  );
+  late final TextEditingController _heightController = TextEditingController(
+    text: '48',
+  );
   ImageFitMode _fit = ImageFitMode.cover;
   BeadPalette? _palette = mardPalette;
   bool _dither = false;
@@ -40,7 +48,56 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _widthController.dispose();
+    _heightController.dispose();
     super.dispose();
+  }
+
+  double get _sourceAspect {
+    final source = _sourceImage;
+    if (source == null || source.height == 0) return 1;
+    return source.width / source.height;
+  }
+
+  void _syncControllers() {
+    _widthController.text = '$_width';
+    _heightController.text = '$_height';
+  }
+
+  void _setWidthFromText(String value) {
+    final next = int.tryParse(value);
+    if (next == null || next < 1 || next > maxPatternDimension) return;
+    setState(() {
+      _width = next;
+      if (_linkedToSource) {
+        _height = (next / _sourceAspect).round().clamp(1, maxPatternDimension);
+        _heightController.text = '$_height';
+      }
+    });
+    _scheduleConvert();
+  }
+
+  void _setHeightFromText(String value) {
+    final next = int.tryParse(value);
+    if (next == null || next < 1 || next > maxPatternDimension) return;
+    setState(() {
+      _height = next;
+      if (_linkedToSource) {
+        _width = (next * _sourceAspect).round().clamp(1, maxPatternDimension);
+        _widthController.text = '$_width';
+      }
+    });
+    _scheduleConvert();
+  }
+
+  void _setSquarePreset(int size) {
+    setState(() {
+      _width = size;
+      _height = size;
+      _linkedToSource = false;
+      _syncControllers();
+    });
+    _scheduleConvert(immediate: true);
   }
 
   Future<void> _pickImage() async {
@@ -63,6 +120,11 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
         _sourceImage = decoded;
         _sourceName = stem.isEmpty ? '导入作品' : stem;
         _width = math.min(48, math.max(8, decoded.width));
+        _height = (_width * decoded.height / decoded.width)
+            .round()
+            .clamp(1, maxPatternDimension);
+        _linkedToSource = true;
+        _syncControllers();
         _preview = null;
         _error = null;
       });
@@ -103,6 +165,7 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
         title: _sourceName,
         settings: ImageImportSettings(
           width: _width,
+          height: _height,
           fit: _fit,
           palette: _palette,
           dither: _dither,
@@ -417,10 +480,10 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Text('网格宽度', style: sectionStyle),
+              Text('画布尺寸', style: sectionStyle),
               const Spacer(),
               Text(
-                '$_width 格',
+                '$_width × $_height',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -429,30 +492,82 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
               ),
             ],
           ),
-          Slider(
-            value: _width.toDouble().clamp(8, 160),
-            min: 8,
-            max: 160,
-            divisions: 152,
-            label: '$_width',
-            onChanged: (value) {
-              setState(() => _width = value.round());
-              _scheduleConvert();
-            },
+          const SizedBox(height: 10),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: TextField(
+                  controller: _widthController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: <TextInputFormatter>[
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: '宽度',
+                    suffixText: '格',
+                    isDense: true,
+                  ),
+                  onChanged: _setWidthFromText,
+                ),
+              ),
+              IconButton(
+                tooltip: _linkedToSource ? '已锁定原图比例' : '自由宽高',
+                onPressed: () {
+                  setState(() {
+                    _linkedToSource = !_linkedToSource;
+                    if (_linkedToSource) {
+                      _height = (_width / _sourceAspect)
+                          .round()
+                          .clamp(1, maxPatternDimension);
+                      _heightController.text = '$_height';
+                    }
+                  });
+                  _scheduleConvert();
+                },
+                icon: Icon(
+                  _linkedToSource ? Icons.link_rounded : Icons.link_off_rounded,
+                  size: 20,
+                ),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _heightController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: <TextInputFormatter>[
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: '高度',
+                    suffixText: '格',
+                    isDense: true,
+                  ),
+                  onChanged: _setHeightFromText,
+                ),
+              ),
+            ],
           ),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: <Widget>[
-              for (final size in const <int>[16, 29, 48, 58, 96])
+              for (final size in const <int>[29, 48, 58, 96])
                 ChoiceChip(
-                  label: Text('$size'),
-                  selected: _width == size,
+                  label: Text('$size×$size'),
+                  selected: _width == size && _height == size,
                   showCheckmark: false,
-                  onSelected: (_) =>
-                      _update(() => _width = size, immediate: true),
+                  onSelected: (_) => _setSquarePreset(size),
                 ),
             ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '锁定后自动保持原图宽高比；解锁并设置不同比例后，构图方式才会产生区别。',
+            style: TextStyle(
+              fontSize: 10.5,
+              height: 1.5,
+              color: scheme.onSurfaceVariant,
+            ),
           ),
           const SizedBox(height: 20),
           Text('构图方式', style: sectionStyle),
@@ -530,8 +645,7 @@ class _ImageImportScreenState extends State<ImageImportScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '抖动可减少色带，但会让像素更碎；清晰的像素图建议关闭。'
-            '宽度上限受画布 400 格限制并自动保持宽高比。',
+            '抖动可减少色带，但会让像素更碎；清晰的像素图建议关闭。',
             style: TextStyle(
               fontSize: 10.5,
               height: 1.55,

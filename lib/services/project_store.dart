@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,6 +13,7 @@ import '../models/pattern.dart';
 class ProjectStore {
   static const String _prefix = 'bead_studio.project.';
   static const String _lastProjectKey = 'bead_studio.last_project';
+  static const String _referencePrefix = 'bead_studio.reference.';
 
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 
@@ -48,9 +52,31 @@ class ProjectStore {
   Future<void> delete(String id) async {
     final prefs = await _prefs;
     await prefs.remove('$_prefix$id');
+    await prefs.remove('$_referencePrefix$id');
     if (prefs.getString(_lastProjectKey) == id) {
       await prefs.remove(_lastProjectKey);
     }
+  }
+
+  Future<bool> saveReferenceImage(String id, Uint8List bytes) async {
+    final prefs = await _prefs;
+    return prefs.setString('$_referencePrefix$id', base64Encode(bytes));
+  }
+
+  Future<Uint8List?> loadReferenceImage(String id) async {
+    final prefs = await _prefs;
+    final raw = prefs.getString('$_referencePrefix$id');
+    if (raw == null) return null;
+    try {
+      return base64Decode(raw);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<void> deleteReferenceImage(String id) async {
+    final prefs = await _prefs;
+    await prefs.remove('$_referencePrefix$id');
   }
 
   Future<String?> lastProjectId() async {

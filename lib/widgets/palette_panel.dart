@@ -84,9 +84,9 @@ class _PalettePanelState extends State<PalettePanel> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: _controller,
-      builder: (context, _) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _controller.colorRevision,
+      builder: (context, _, _) {
         final scheme = Theme.of(context).colorScheme;
         final colors = _colors;
         final selected = _controller.selectedBead;

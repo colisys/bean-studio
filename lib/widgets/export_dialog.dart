@@ -36,8 +36,16 @@ class _ExportDialogState extends State<_ExportDialog> {
   String? _error;
   int _renderToken = 0;
 
-  String get _filename =>
-      ExportService.safeFilename(widget.controller.pattern.title, '.png');
+  String get _filename {
+    final controller = widget.controller;
+    final suffix = controller.frameCount > 1
+        ? '-帧${controller.currentFrame + 1}'
+        : '';
+    return ExportService.safeFilename(
+      '${controller.pattern.title}$suffix',
+      '.png',
+    );
+  }
 
   @override
   void initState() {
@@ -59,6 +67,7 @@ class _ExportDialogState extends State<_ExportDialog> {
         showLegend: _showLegend,
         showHeader: _showHeader,
         palette: widget.controller.palette,
+        frameIndex: widget.controller.currentFrame,
       );
       if (!mounted || token != _renderToken) return;
       setState(() {
@@ -146,7 +155,8 @@ class _ExportDialogState extends State<_ExportDialog> {
               ),
               Text(
                 '${pattern.title} · ${pattern.width} × ${pattern.height} · '
-                '${pattern.beadCount} 颗豆',
+                '${widget.controller.frameCount > 1 ? '帧 ${widget.controller.currentFrame + 1}/${widget.controller.frameCount} · ' : ''}'
+                '${widget.controller.currentBeadCount} 颗豆',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

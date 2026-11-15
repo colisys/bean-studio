@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/pattern.dart';
 import '../services/export_service.dart';
@@ -10,9 +15,14 @@ import '../state/editor_controller.dart';
 import '../theme.dart';
 import '../utils/color_utils.dart';
 import '../widgets/bead_canvas.dart';
+import '../widgets/animation_export_dialog.dart';
 import '../widgets/export_dialog.dart';
+import '../widgets/frame_strip.dart';
 import '../widgets/materials_sheet.dart';
 import '../widgets/palette_panel.dart';
+import '../widgets/reference_overlay.dart';
+import '../widgets/resize_canvas_dialog.dart';
+import '../widgets/update_dialog.dart';
 import '../widgets/true_color_picker.dart';
 import 'camera_color_picker_screen.dart';
 import 'image_import_screen.dart';
@@ -36,6 +46,8 @@ class _EditorScreenState extends State<EditorScreen>
   bool _exiting = false;
   bool _allowPop = false;
   Future<void> _saveQueue = Future<void>.value();
+  Uint8List? _referenceBytes;
+  double? _referenceAspect;
 
   @override
   void initState() {
@@ -44,6 +56,7 @@ class _EditorScreenState extends State<EditorScreen>
     _lastSeenRevision = _controller.revision;
     _controller.addListener(_onControllerChanged);
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadReferenceImage());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _save(silent: true);
     });
@@ -156,8 +169,8 @@ class _EditorScreenState extends State<EditorScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('清空画布？'),
-        content: const Text('画布上的所有豆子都会被移除，可以用撤销恢复。'),
+        title: const Text('清空当前帧？'),
+        content: const Text('当前帧上的所有豆子都会被移除，可以用撤销恢复。'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -175,6 +188,19 @@ class _EditorScreenState extends State<EditorScreen>
       ),
     );
     if (confirmed == true) _controller.clearCanvas();
+  }
+
+  Future<void> _resizeCanvas() async {
+    final result = await showResizeCanvasDialog(
+      context,
+      width: _controller.pattern.width,
+      height: _controller.pattern.height,
+    );
+    if (result == null) return;
+    final (width, height, anchor) = result;
+    if (_controller.resizeCanvas(width, height, anchor: anchor)) {
+      _snack('画布尺寸已更新为 $width × $height');
+    }
   }
 
   Future<void> _exportProjectFile() async {
@@ -207,7 +233,11 @@ class _EditorScreenState extends State<EditorScreen>
     try {
       final pattern = _controller.pattern;
       final bytes = ExportService.textBytes(
-        ExportService.materialsCsv(pattern, palette: _controller.palette),
+        ExportService.materialsCsv(
+          pattern,
+          palette: _controller.palette,
+          frameIndex: _controller.currentFrame,
+        ),
       );
       final filename = ExportService.safeFilename(pattern.title, '.csv');
       final path = ExportService.isMobile
@@ -249,6 +279,79 @@ class _EditorScreenState extends State<EditorScreen>
     );
   }
 
+  Future<void> _loadReferenceImage() async {
+    try {
+      final bytes = await _store.loadReferenceImage(_controller.pattern.id);
+      if (bytes == null || !mounted) return;
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null || !mounted) return;
+      setState(() {
+        _referenceBytes = bytes;
+        _referenceAspect = decoded.width / decoded.height;
+      });
+    } on Object {
+      // A missing or corrupt reference image should never block editing.
+    }
+  }
+
+  Future<void> _pickReferenceImage() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 2200,
+        maxHeight: 2200,
+      );
+      if (picked == null) return;
+      final raw = await picked.readAsBytes();
+      var image = img.decodeImage(raw);
+      if (image == null) throw const FormatException('无法读取该图片');
+      image = img.bakeOrientation(image);
+      final maxSide = math.max(image.width, image.height);
+      if (maxSide > 1400) {
+        final scale = 1400 / maxSide;
+        image = img.copyResize(
+          image,
+          width: (image.width * scale).round(),
+          height: (image.height * scale).round(),
+          interpolation: img.Interpolation.average,
+        );
+      }
+      final bytes = Uint8List.fromList(img.encodeJpg(image, quality: 85));
+      await _store.saveReferenceImage(_controller.pattern.id, bytes);
+      if (!mounted) return;
+      setState(() {
+        _referenceBytes = bytes;
+        _referenceAspect = image!.width / image.height;
+      });
+    } on Object catch (error) {
+      _snack('添加参考图失败：$error');
+    }
+  }
+
+  Future<void> _removeReferenceImage() async {
+    await _store.deleteReferenceImage(_controller.pattern.id);
+    if (!mounted) return;
+    setState(() {
+      _referenceBytes = null;
+      _referenceAspect = null;
+    });
+  }
+
+  Widget _buildCanvasArea() {
+    return Stack(
+      clipBehavior: Clip.hardEdge,
+      children: <Widget>[
+        Positioned.fill(child: BeadCanvas(controller: _controller)),
+        if (_referenceBytes != null && _referenceAspect != null)
+          ReferenceOverlay(
+            bytes: _referenceBytes!,
+            aspect: _referenceAspect!,
+            onClose: _removeReferenceImage,
+          ),
+      ],
+    );
+  }
+
   Future<void> _openPaletteSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -285,6 +388,10 @@ class _EditorScreenState extends State<EditorScreen>
     if (color != null) _controller.selectColor(color);
   }
 
+  Future<void> _exportAnimation() {
+    return showAnimationExportDialog(context, controller: _controller);
+  }
+
   void _showAbout() {
     showAboutDialog(
       context: context,
@@ -292,9 +399,20 @@ class _EditorScreenState extends State<EditorScreen>
       applicationVersion: appVersionLabel,
       applicationIcon: const Icon(Icons.grid_view_rounded, size: 36),
       applicationLegalese:
-          '$appLicense\nCopyright (C) 2026 Bead Studio contributors',
+          '$appLicense\nCopyright (C) 2026 DawnCall\n$appWebsite',
       children: <Widget>[
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => launchUrl(
+              Uri.parse(appWebsite),
+              mode: LaunchMode.externalApplication,
+            ),
+            icon: const Icon(Icons.public_rounded, size: 18),
+            label: const Text(appWebsite),
+          ),
+        ),
         Text(
           'MARD、Hama、Perler 色值为屏幕近似参考，实体豆子可能因批次略有差异。',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -320,13 +438,17 @@ class _EditorScreenState extends State<EditorScreen>
           onRename: _rename,
           onSave: () => _save(),
           onImportImage: _importImageAsNew,
+          onPickReferenceImage: _pickReferenceImage,
+          onExportAnimation: _exportAnimation,
           onExportImage: () =>
               showExportDialog(context, controller: _controller),
           onExportProject: _exportProjectFile,
           onExportMaterials: () =>
               showMaterialsSheet(context, controller: _controller),
           onExportCsv: _exportMaterialsCsv,
+          onResizeCanvas: _resizeCanvas,
           onClear: _clearCanvas,
+          onCheckUpdate: () => showUpdateDialog(context),
           onAbout: _showAbout,
         ),
         body: LayoutBuilder(
@@ -338,7 +460,12 @@ class _EditorScreenState extends State<EditorScreen>
                   Expanded(
                     child: Column(
                       children: <Widget>[
-                        Expanded(child: BeadCanvas(controller: _controller)),
+                        Expanded(child: _buildCanvasArea()),
+                        const Divider(height: 1),
+                        FrameStrip(
+                          controller: _controller,
+                          onExportAnimation: _exportAnimation,
+                        ),
                         const Divider(height: 1),
                         _ToolStrip(controller: _controller, compact: false),
                         const Divider(height: 1),
@@ -356,7 +483,12 @@ class _EditorScreenState extends State<EditorScreen>
             }
             return Column(
               children: <Widget>[
-                Expanded(child: BeadCanvas(controller: _controller)),
+                Expanded(child: _buildCanvasArea()),
+                const Divider(height: 1),
+                FrameStrip(
+                  controller: _controller,
+                  onExportAnimation: _exportAnimation,
+                ),
                 const Divider(height: 1),
                 _ToolStrip(controller: _controller, compact: true),
                 const Divider(height: 1),
@@ -391,11 +523,15 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onRename,
     required this.onSave,
     required this.onImportImage,
+    required this.onPickReferenceImage,
+    required this.onExportAnimation,
     required this.onExportImage,
     required this.onExportProject,
     required this.onExportMaterials,
     required this.onExportCsv,
+    required this.onResizeCanvas,
     required this.onClear,
+    required this.onCheckUpdate,
     required this.onAbout,
   });
 
@@ -404,11 +540,15 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onRename;
   final VoidCallback onSave;
   final VoidCallback onImportImage;
+  final VoidCallback onPickReferenceImage;
+  final VoidCallback onExportAnimation;
   final VoidCallback onExportImage;
   final VoidCallback onExportProject;
   final VoidCallback onExportMaterials;
   final VoidCallback onExportCsv;
+  final VoidCallback onResizeCanvas;
   final VoidCallback onClear;
+  final VoidCallback onCheckUpdate;
   final VoidCallback onAbout;
 
   @override
@@ -418,6 +558,12 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
     switch (value) {
       case 'import':
         onImportImage();
+        break;
+      case 'reference':
+        onPickReferenceImage();
+        break;
+      case 'animation':
+        onExportAnimation();
         break;
       case 'image':
         onExportImage();
@@ -431,8 +577,14 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
       case 'csv':
         onExportCsv();
         break;
+      case 'resize':
+        onResizeCanvas();
+        break;
       case 'clear':
         onClear();
+        break;
+      case 'update':
+        onCheckUpdate();
         break;
       case 'about':
         onAbout();
@@ -472,7 +624,9 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
                     const SizedBox(height: 1),
                     Text(
                       '${pattern.width} × ${pattern.height} · '
-                      '${pattern.beadCount} 颗豆 · ${pattern.usedColorCount} 色',
+                      '${controller.currentBeadCount} 颗豆 · '
+                      '${controller.currentColorCount} 色'
+                      '${controller.frameCount > 1 ? ' · 帧 ${controller.currentFrame + 1}/${controller.frameCount}' : ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -537,7 +691,21 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
                     label: '导入图片为新作品',
                   ),
                 ),
+                PopupMenuItem<String>(
+                  value: 'reference',
+                  child: _MenuRow(
+                    icon: Icons.image_outlined,
+                    label: '添加 / 更换参考图',
+                  ),
+                ),
                 PopupMenuDivider(),
+                PopupMenuItem<String>(
+                  value: 'animation',
+                  child: _MenuRow(
+                    icon: Icons.gif_box_outlined,
+                    label: '导出动画（GIF / APNG）',
+                  ),
+                ),
                 PopupMenuItem<String>(
                   value: 'image',
                   child: _MenuRow(
@@ -568,10 +736,24 @@ class _EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
                 PopupMenuDivider(),
                 PopupMenuItem<String>(
+                  value: 'resize',
+                  child: _MenuRow(
+                    icon: Icons.crop_free_rounded,
+                    label: '调整画布尺寸',
+                  ),
+                ),
+                PopupMenuItem<String>(
                   value: 'clear',
                   child: _MenuRow(
                     icon: Icons.delete_sweep_outlined,
-                    label: '清空画布',
+                    label: '清空当前帧',
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'update',
+                  child: _MenuRow(
+                    icon: Icons.system_update_alt_rounded,
+                    label: '检查更新',
                   ),
                 ),
                 PopupMenuItem<String>(
@@ -803,9 +985,9 @@ class _MobilePaletteBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
+    return ValueListenableBuilder<int>(
+      valueListenable: controller.colorRevision,
+      builder: (context, _, _) {
         return Container(
           color: scheme.surface,
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -928,11 +1110,20 @@ class _StatusBar extends StatelessWidget {
               const SizedBox(width: 8),
               Text('·', style: muted),
               const SizedBox(width: 8),
-              Text('${pattern.beadCount} 颗豆', style: muted),
+              Text('${controller.currentBeadCount} 颗豆', style: muted),
               const SizedBox(width: 8),
               Text('·', style: muted),
               const SizedBox(width: 8),
-              Text('${pattern.usedColorCount} 色', style: muted),
+              Text('${controller.currentColorCount} 色', style: muted),
+              if (controller.frameCount > 1) ...<Widget>[
+                const SizedBox(width: 8),
+                Text('·', style: muted),
+                const SizedBox(width: 8),
+                Text(
+                  '帧 ${controller.currentFrame + 1}/${controller.frameCount}',
+                  style: muted,
+                ),
+              ],
               const Spacer(),
               Container(
                 width: 10,

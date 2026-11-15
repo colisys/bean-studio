@@ -117,5 +117,61 @@ void main() {
       controller.undo();
       expect(controller.pattern.beadCount, 16);
     });
+
+    test('supports multiple frames with duplicate, switch, delete and undo', () {
+      final controller = _controller();
+      controller.selectColor(0xFFAA3355);
+      controller.floodFillAt(0, 0);
+      expect(controller.frameCount, 1);
+      expect(controller.currentBeadCount, 16);
+
+      expect(controller.duplicateCurrentFrame(), isTrue);
+      expect(controller.frameCount, 2);
+      expect(controller.currentFrame, 1);
+      expect(controller.currentBeadCount, 16);
+
+      controller.switchFrame(0);
+      controller.selectColor(0xFF00AA55);
+      controller.floodFillAt(0, 0);
+      expect(controller.pattern.colorCountsFor(0)[0xFF00AA55], 16);
+      expect(controller.pattern.colorCountsFor(1)[0xFFAA3355], 16);
+
+      expect(controller.deleteCurrentFrame(), isTrue);
+      expect(controller.frameCount, 1);
+      expect(controller.currentFrame, 0);
+      controller.undo();
+      expect(controller.frameCount, 2);
+    });
+
+    test('resizes every frame and restores dimensions on undo', () {
+      final controller = _controller();
+      controller.selectColor(0xFF123456);
+      controller.beginStroke();
+      controller.paintAt(1, 1);
+      controller.endStroke();
+
+      expect(
+        controller.resizeCanvas(6, 6, anchor: FrameAnchor.center),
+        isTrue,
+      );
+      expect(controller.pattern.width, 6);
+      expect(controller.pattern.height, 6);
+      expect(controller.pattern.cellAt(2, 2), 0xFF123456);
+
+      controller.undo();
+      expect(controller.pattern.width, 4);
+      expect(controller.pattern.height, 4);
+      expect(controller.pattern.cellAt(1, 1), 0xFF123456);
+    });
+
+    test('cancels an active stroke when a pinch starts', () {
+      final controller = _controller();
+      controller.selectColor(0xFF336699);
+      controller.beginStroke();
+      controller.paintAt(1, 1);
+      controller.cancelStroke();
+      expect(controller.pattern.beadCount, 0);
+      expect(controller.canUndo, isFalse);
+    });
   });
 }

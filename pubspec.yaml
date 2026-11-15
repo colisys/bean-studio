@@ -1,7 +1,9 @@
 name: bead_studio
 description: "拼豆工坊 — 拼豆图案编辑器 / Perler bead pattern studio"
+homepage: https://bean.dawncall.work
+repository: https://github.com/colisys/bean-studio
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.14.0
@@ -29,6 +31,11 @@ dependencies:
 
   # Image decoding and palette conversion.
   image: ^4.12.0
+  http: ^1.6.0
+  open_filex: ^5.0.0
+  url_launcher: ^6.3.3
+  pub_semver: ^2.2.1
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:

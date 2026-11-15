@@ -20,7 +20,10 @@ Future<Uint8List> renderPatternPng({
   required bool showLegend,
   required bool showHeader,
   BeadPalette? palette,
+  int frameIndex = 0,
 }) async {
+  final frame = frameIndex.clamp(0, pattern.frameCount - 1);
+  final cells = pattern.frameAt(frame);
   const padding = 30.0;
   const headerHeight = 62.0;
   const footerHeight = 34.0;
@@ -37,7 +40,7 @@ Future<Uint8List> renderPatternPng({
   final gridWidth = pattern.width * cellSize;
   final gridHeight = pattern.height * cellSize;
 
-  final counts = pattern.colorCounts.entries.toList()
+  final counts = pattern.colorCountsFor(frame).entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
   final legendColumns = showLegend && counts.isNotEmpty
       ? math.min(5, counts.length)
@@ -89,8 +92,9 @@ Future<Uint8List> renderPatternPng({
     );
     _paintText(
       canvas,
-      '${pattern.width} × ${pattern.height}  ·  ${_formatCount(pattern.beadCount)} 颗豆  ·  '
-      '${pattern.usedColorCount} 种颜色',
+      '${pattern.width} × ${pattern.height}  ·  '
+      '${_formatCount(pattern.beadCountFor(frame))} 颗豆  ·  '
+      '${pattern.usedColorCountFor(frame)} 种颜色',
       ui.Offset(padding, cursorY + 34),
       const TextStyle(color: Color(0xFF8A8178), fontSize: 13, height: 1.2),
       maxWidth: width - padding * 2,
@@ -102,6 +106,7 @@ Future<Uint8List> renderPatternPng({
   _paintPattern(
     canvas: canvas,
     pattern: pattern,
+    cells: cells,
     rect: gridRect,
     cellSize: cellSize,
     style: style,
@@ -187,6 +192,7 @@ Future<Uint8List> renderPatternPng({
 void _paintPattern({
   required ui.Canvas canvas,
   required BeadPattern pattern,
+  required Uint32List cells,
   required ui.Rect rect,
   required double cellSize,
   required CanvasStyle style,
@@ -207,7 +213,7 @@ void _paintPattern({
 
   for (var y = 0; y < pattern.height; y++) {
     for (var x = 0; x < pattern.width; x++) {
-      final argb = pattern.cellAt(x, y);
+      final argb = cells[y * pattern.width + x];
       final cellRect = ui.Rect.fromLTWH(
         rect.left + x * cellSize,
         rect.top + y * cellSize,

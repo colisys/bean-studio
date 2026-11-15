@@ -3,13 +3,18 @@ import 'package:material_ui/material_ui.dart';
 
 const String appName = '拼豆工坊';
 const String appNameEn = 'Bead Studio';
-const String appVersionBase = '1.0.0';
+const String appId = 'work.dawncall.bean';
+const String appWebsite = 'https://bean.dawncall.work';
+const String appRepository = 'colisys/bean-studio';
+const String appVersionBase = '1.0.1';
 const String appVersion = String.fromEnvironment(
   'APP_VERSION',
   defaultValue: appVersionBase,
 );
 const String appCommit = String.fromEnvironment('GIT_COMMIT');
 const String appLicense = 'GPL-3.0-or-later';
+const String appReleasesUrl =
+    'https://github.com/colisys/bean-studio/releases';
 
 /// Version shown in About / footer, including the short git commit supplied by CI.
 String get appVersionLabel {

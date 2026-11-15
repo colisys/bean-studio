@@ -13,6 +13,7 @@ enum ImageFitMode { cover, contain, stretch }
 class ImageImportSettings {
   const ImageImportSettings({
     this.width = 48,
+    this.height,
     this.fit = ImageFitMode.cover,
     this.palette,
     this.dither = false,
@@ -20,6 +21,7 @@ class ImageImportSettings {
   });
 
   final int width;
+  final int? height;
   final ImageFitMode fit;
   final BeadPalette? palette;
   final bool dither;
@@ -43,17 +45,19 @@ class ImageImportService {
       throw const FormatException('图片尺寸无效');
     }
 
-    var width = settings.width.clamp(1, maxPatternDimension);
-    var height = (width * sourceHeight / sourceWidth).round().clamp(
-      1,
-      maxPatternDimension,
-    );
-    if ((width * sourceHeight / sourceWidth) > maxPatternDimension) {
-      height = maxPatternDimension;
-      width = (height * sourceWidth / sourceHeight).round().clamp(
-        1,
-        maxPatternDimension,
-      );
+    final width = settings.width.clamp(1, maxPatternDimension);
+    final int height;
+    if (settings.height != null) {
+      height = settings.height!.clamp(1, maxPatternDimension);
+    } else {
+      final rawHeight = (width * sourceHeight / sourceWidth).round();
+      if (rawHeight > maxPatternDimension) {
+        height = maxPatternDimension;
+      } else if (rawHeight < 1) {
+        height = 1;
+      } else {
+        height = rawHeight;
+      }
     }
 
     final prepared = _prepare(source, width, height, settings.fit);
@@ -95,7 +99,7 @@ class ImageImportService {
       title: title.trim().isEmpty ? '导入作品' : title.trim(),
       width: width,
       height: height,
-      cells: cells,
+      frames: <Uint32List>[cells],
     );
   }
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter/services.dart';
 
 import '../models/pattern.dart';
 import '../state/editor_controller.dart';
@@ -20,17 +21,24 @@ class BeadCanvas extends StatefulWidget {
 
 class _BeadCanvasState extends State<BeadCanvas> {
   static const double _cell = 26;
-  static const double _minScale = 0.02;
   static const double _maxScale = 8;
+  static const double _tapSlop = 8;
 
   final TransformationController _transform = TransformationController();
   final Set<int> _pointers = <int>{};
-  final GlobalKey _viewportKey = GlobalKey();
 
   Size _viewport = Size.zero;
   double _scale = 1;
   bool _didInitialFit = false;
+  String? _lastSizeKey;
   (int, int)? _hover;
+
+  int? _drawPointer;
+  int? _tapPointer;
+  bool _multiTouch = false;
+  bool _moved = false;
+  Offset _downViewport = Offset.zero;
+  (int, int)? _tapCell;
   (int, int)? _strokeLastCell;
   (int, int)? _dragStart;
   (int, int)? _dragEnd;
@@ -47,6 +55,19 @@ class _BeadCanvasState extends State<BeadCanvas> {
   double get _contentWidth => _controller.pattern.width * _cell;
   double get _contentHeight => _controller.pattern.height * _cell;
 
+  double get _fitScale {
+    if (_viewport.isEmpty) return 1;
+    final raw =
+        math.min(
+          _viewport.width / _contentWidth,
+          _viewport.height / _contentHeight,
+        ) *
+        0.92;
+    return raw.clamp(0.04, 4.0);
+  }
+
+  double get _minScale => math.max(0.03, _fitScale * 0.85);
+
   void _scheduleInitialFit() {
     if (_didInitialFit || _viewport.isEmpty) return;
     _didInitialFit = true;
@@ -57,15 +78,9 @@ class _BeadCanvasState extends State<BeadCanvas> {
 
   void _fitToView() {
     if (_viewport.isEmpty) return;
-    final scale = math.min(
-      _viewport.width / _contentWidth,
-      _viewport.height / _contentHeight,
-    );
-    final fitted = (scale * 0.92).clamp(_minScale, 2.0);
-    final dx = (_viewport.width - _contentWidth * fitted) / 2;
-    final dy = (_viewport.height - _contentHeight * fitted) / 2;
+    final fitted = _fitScale;
     _transform.value = Matrix4.identity()
-      ..translateByDouble(dx, dy, 0, 1)
+      ..translateByDouble(16, 16, 0, 1)
       ..scaleByDouble(fitted, fitted, 1, 1);
     setState(() => _scale = fitted);
   }
@@ -75,39 +90,71 @@ class _BeadCanvasState extends State<BeadCanvas> {
     final current = _transform.value.getMaxScaleOnAxis();
     final next = (current * factor).clamp(_minScale, _maxScale);
     if ((next - current).abs() < 0.0001) return;
-    final focal = Offset(_viewport.width / 2, _viewport.height / 2);
-    final zoom = next / current;
-    final matrix = Matrix4.identity()
-      ..translateByDouble(focal.dx, focal.dy, 0, 1)
-      ..scaleByDouble(zoom, zoom, 1, 1)
-      ..translateByDouble(-focal.dx, -focal.dy, 0, 1)
-      ..multiply(_transform.value);
-    _transform.value = matrix;
+    if (next <= _minScale + 0.0001) {
+      _transform.value = Matrix4.identity()
+        ..translateByDouble(16, 16, 0, 1)
+        ..scaleByDouble(next, next, 1, 1);
+    } else {
+      final focal = Offset(_viewport.width / 2, _viewport.height / 2);
+      final zoom = next / current;
+      _transform.value = Matrix4.identity()
+        ..translateByDouble(focal.dx, focal.dy, 0, 1)
+        ..scaleByDouble(zoom, zoom, 1, 1)
+        ..translateByDouble(-focal.dx, -focal.dy, 0, 1)
+        ..multiply(_transform.value);
+    }
     setState(() => _scale = next);
   }
 
-  (int, int)? _cellAt(Offset local) {
-    final x = (local.dx / _cell).floor();
-    final y = (local.dy / _cell).floor();
+  Offset _sceneFromViewport(Offset viewportPoint) {
+    final inverse = Matrix4.tryInvert(_transform.value);
+    if (inverse == null) return Offset.zero;
+    return MatrixUtils.transformPoint(inverse, viewportPoint);
+  }
+
+  (int, int)? _cellAtViewport(Offset viewportPoint) {
+    final scene = _sceneFromViewport(viewportPoint);
+    final x = (scene.dx / _cell).floor();
+    final y = (scene.dy / _cell).floor();
     if (!_controller.pattern.inBounds(x, y)) return null;
     return (x, y);
   }
 
-  bool get _canDraw => _controller.tool != EditorTool.pan;
+  void _updateHover((int, int)? cell) {
+    if (cell == _hover) return;
+    if (mounted) setState(() => _hover = cell);
+  }
 
-  void _onPanDown(DragDownDetails details) {
-    if (_pointers.length > 1) return;
-    final cell = _cellAt(details.localPosition);
-    if (cell == null) return;
-    _hover = cell;
-    final tool = _controller.tool;
+  void _onPointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse &&
+        (event.buttons & kPrimaryButton) == 0) {
+      return;
+    }
+    _pointers.add(event.pointer);
+    if (_pointers.length > 1) {
+      _beginMultiTouch();
+      return;
+    }
 
-    if (tool == EditorTool.pen || tool == EditorTool.eraser) {
-      _controller.beginStroke();
+    _multiTouch = false;
+    _downViewport = event.localPosition;
+    _tapPointer = event.pointer;
+    _moved = false;
+    final cell = _cellAtViewport(event.localPosition);
+    _tapCell = cell;
+    _updateHover(cell);
+    if (_controller.tool == EditorTool.pan || cell == null) return;
+
+    if (_controller.tool == EditorTool.pen ||
+        _controller.tool == EditorTool.eraser) {
+      _drawPointer = event.pointer;
       _strokeActive = true;
       _strokeLastCell = cell;
+      _controller.beginStroke();
       _controller.paintAt(cell.$1, cell.$2);
-    } else if (tool == EditorTool.line || tool == EditorTool.rectangle) {
+    } else if (_controller.tool == EditorTool.line ||
+        _controller.tool == EditorTool.rectangle) {
+      _drawPointer = event.pointer;
       setState(() {
         _dragStart = cell;
         _dragEnd = cell;
@@ -115,23 +162,25 @@ class _BeadCanvasState extends State<BeadCanvas> {
     }
   }
 
-  void _onPanUpdate(DragUpdateDetails details) {
-    if (_pointers.length > 1) return;
-    final cell = _cellAt(details.localPosition);
-    if (cell == null) return;
-    _hover = cell;
-    final tool = _controller.tool;
+  void _onPointerMove(PointerMoveEvent event) {
+    if (!_pointers.contains(event.pointer)) return;
+    if (event.pointer == _tapPointer &&
+        (event.localPosition - _downViewport).distance > _tapSlop) {
+      _moved = true;
+    }
+    if (_multiTouch || _pointers.length > 1) return;
 
+    final cell = _cellAtViewport(event.localPosition);
+    _updateHover(cell);
+    if (event.pointer != _drawPointer || cell == null) return;
+
+    final tool = _controller.tool;
     if (tool == EditorTool.pen || tool == EditorTool.eraser) {
-      if (!_strokeActive) {
-        _controller.beginStroke();
-        _strokeActive = true;
-      }
       final last = _strokeLastCell;
-      if (last != null) {
-        _controller.paintSegment(last.$1, last.$2, cell.$1, cell.$2);
-      } else {
+      if (last == null) {
         _controller.paintAt(cell.$1, cell.$2);
+      } else {
+        _controller.paintSegment(last.$1, last.$2, cell.$1, cell.$2);
       }
       _strokeLastCell = cell;
     } else if (tool == EditorTool.line || tool == EditorTool.rectangle) {
@@ -141,66 +190,102 @@ class _BeadCanvasState extends State<BeadCanvas> {
     }
   }
 
-  void _onPanEnd(DragEndDetails details) {
-    if (_strokeActive) {
-      _controller.endStroke();
-      _strokeActive = false;
-      _strokeLastCell = null;
+  void _onPointerUp(PointerUpEvent event) {
+    if (!_pointers.remove(event.pointer)) return;
+
+    if (_multiTouch) {
+      if (_pointers.isEmpty) _finishMultiTouch();
+      return;
     }
 
-    final start = _dragStart;
-    final end = _dragEnd;
-    if (start != null && end != null) {
-      final tool = _controller.tool;
-      if (tool == EditorTool.line) {
-        _controller.commitLine(start.$1, start.$2, end.$1, end.$2);
-      } else if (tool == EditorTool.rectangle) {
-        _controller.commitRectangle(start.$1, start.$2, end.$1, end.$2);
+    final tool = _controller.tool;
+    if (event.pointer == _drawPointer) {
+      if (_strokeActive) {
+        _controller.endStroke();
+        _strokeActive = false;
+        _strokeLastCell = null;
+      }
+      final start = _dragStart;
+      final end = _dragEnd;
+      if (start != null && end != null) {
+        if (tool == EditorTool.line) {
+          _controller.commitLine(start.$1, start.$2, end.$1, end.$2);
+        } else if (tool == EditorTool.rectangle) {
+          _controller.commitRectangle(start.$1, start.$2, end.$1, end.$2);
+        }
+      }
+      if (_dragStart != null || _dragEnd != null) {
+        setState(() {
+          _dragStart = null;
+          _dragEnd = null;
+        });
+      }
+      _drawPointer = null;
+    } else if (event.pointer == _tapPointer &&
+        !_moved &&
+        _tapCell != null &&
+        _pointers.isEmpty) {
+      final (x, y) = _tapCell!;
+      if (tool == EditorTool.fill) {
+        _controller.floodFillAt(x, y);
+      } else if (tool == EditorTool.eyedropper) {
+        _controller.pickAt(x, y);
       }
     }
-    if (_dragStart != null || _dragEnd != null) {
-      setState(() {
-        _dragStart = null;
-        _dragEnd = null;
-      });
-    }
+
+    if (_pointers.isEmpty) _resetTapState();
   }
 
-  void _onPanCancel() {
+  void _onPointerCancel(PointerCancelEvent event) {
+    _pointers.remove(event.pointer);
     if (_strokeActive) {
-      _controller.endStroke();
+      _controller.cancelStroke();
       _strokeActive = false;
-      _strokeLastCell = null;
     }
+    _strokeLastCell = null;
+    _drawPointer = null;
     if (_dragStart != null || _dragEnd != null) {
       setState(() {
         _dragStart = null;
         _dragEnd = null;
       });
     }
-  }
-
-  void _onTapUp(TapUpDetails details) {
-    if (_pointers.length > 1) return;
-    final cell = _cellAt(details.localPosition);
-    if (cell == null) return;
-    if (_controller.tool == EditorTool.fill) {
-      _controller.floodFillAt(cell.$1, cell.$2);
-    } else if (_controller.tool == EditorTool.eyedropper) {
-      _controller.pickAt(cell.$1, cell.$2);
+    if (_pointers.isEmpty) {
+      _multiTouch = false;
+      _resetTapState();
     }
   }
 
-  void _onLongPress(LongPressStartDetails details) {
-    final cell = _cellAt(details.localPosition);
-    if (cell == null) return;
-    HapticFeedback.selectionClick();
-    _controller.pickAt(cell.$1, cell.$2);
+  void _beginMultiTouch() {
+    _multiTouch = true;
+    if (_strokeActive) {
+      _controller.cancelStroke();
+      _strokeActive = false;
+    }
+    _strokeLastCell = null;
+    _drawPointer = null;
+    _tapPointer = null;
+    _tapCell = null;
+    _moved = true;
+    if (_dragStart != null || _dragEnd != null) {
+      setState(() {
+        _dragStart = null;
+        _dragEnd = null;
+      });
+    } else {
+      setState(() {});
+    }
   }
 
-  void _onHover(PointerHoverEvent event) {
-    final cell = _cellAt(event.localPosition);
-    if (cell != _hover) setState(() => _hover = cell);
+  void _finishMultiTouch() {
+    setState(() => _multiTouch = false);
+    _resetTapState();
+  }
+
+  void _resetTapState() {
+    _tapPointer = null;
+    _tapCell = null;
+    _moved = false;
   }
 
   Rect _visibleSceneRect(Matrix4 matrix) {
@@ -235,85 +320,83 @@ class _BeadCanvasState extends State<BeadCanvas> {
           _viewport = viewport;
           _scheduleInitialFit();
         }
+        final sizeKey =
+            '${_controller.pattern.width}x${_controller.pattern.height}';
+        if (_lastSizeKey != null && _lastSizeKey != sizeKey) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _fitToView();
+          });
+        }
+        _lastSizeKey = sizeKey;
+
         return ColoredBox(
-          key: _viewportKey,
           color: scheme.surfaceContainerLow,
           child: Stack(
             children: <Widget>[
               Positioned.fill(
-                child: Listener(
-                  onPointerDown: (event) => _pointers.add(event.pointer),
-                  onPointerUp: (event) => _pointers.remove(event.pointer),
-                  onPointerCancel: (event) => _pointers.remove(event.pointer),
-                  child: InteractiveViewer(
-                    transformationController: _transform,
-                    constrained: false,
-                    minScale: _minScale,
-                    maxScale: _maxScale,
-                    panEnabled: _controller.tool == EditorTool.pan,
-                    scaleEnabled: true,
-                    clipBehavior: Clip.hardEdge,
-                    boundaryMargin: const EdgeInsets.all(800),
-                    onInteractionEnd: (_) {
-                      final scale = _transform.value.getMaxScaleOnAxis();
-                      if ((scale - _scale).abs() > 0.001) {
-                        setState(() => _scale = scale);
-                      }
-                    },
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onPanDown: _canDraw ? _onPanDown : null,
-                      onPanUpdate: _canDraw ? _onPanUpdate : null,
-                      onPanEnd: _canDraw ? _onPanEnd : null,
-                      onPanCancel: _canDraw ? _onPanCancel : null,
-                      onTapUp:
-                          _canDraw &&
-                              (_controller.tool == EditorTool.fill ||
-                                  _controller.tool == EditorTool.eyedropper)
-                          ? _onTapUp
-                          : null,
-                      onLongPressStart: _canDraw ? _onLongPress : null,
-                      child: MouseRegion(
-                        cursor: _cursor,
-                        onHover: _onHover,
-                        onExit: (_) {
-                          if (_hover != null) setState(() => _hover = null);
-                        },
-                        child: SizedBox(
-                          width: _contentWidth,
-                          height: _contentHeight,
-                          child: RepaintBoundary(
-                            child: ListenableBuilder(
-                              listenable: _controller,
-                              builder: (context, _) {
-                                return ValueListenableBuilder<Matrix4>(
-                                  valueListenable: _transform,
-                                  builder: (context, matrix, _) {
-                                    final scale = matrix
-                                        .getMaxScaleOnAxis()
-                                        .clamp(_minScale, _maxScale);
-                                    return CustomPaint(
-                                      painter: _BeadCanvasPainter(
-                                        pattern: _controller.pattern,
-                                        revision: _controller.revision,
-                                        style: _controller.canvasStyle,
-                                        showGrid: _controller.showGrid,
-                                        cell: _cell,
-                                        screenCell: _cell * scale,
-                                        scale: scale,
-                                        visible: _visibleSceneRect(matrix),
-                                        hover: _hover,
-                                        tool: _controller.tool,
-                                        currentColor: _controller.currentColor,
-                                        dragStart: _dragStart,
-                                        dragEnd: _dragEnd,
-                                      ),
-                                      child: const SizedBox.expand(),
-                                    );
-                                  },
-                                );
-                              },
-                            ),
+                child: MouseRegion(
+                  cursor: _cursor,
+                  onHover: (event) =>
+                      _updateHover(_cellAtViewport(event.localPosition)),
+                  onExit: (_) => _updateHover(null),
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: _onPointerDown,
+                    onPointerMove: _onPointerMove,
+                    onPointerUp: _onPointerUp,
+                    onPointerCancel: _onPointerCancel,
+                    child: InteractiveViewer(
+                      transformationController: _transform,
+                      constrained: false,
+                      minScale: _minScale,
+                      maxScale: _maxScale,
+                      panEnabled:
+                          _controller.tool == EditorTool.pan || _multiTouch,
+                      scaleEnabled: true,
+                      clipBehavior: Clip.hardEdge,
+                      boundaryMargin: const EdgeInsets.all(160),
+                      onInteractionEnd: (_) {
+                        final scale = _transform.value.getMaxScaleOnAxis();
+                        if ((scale - _scale).abs() > 0.001) {
+                          setState(() => _scale = scale);
+                        }
+                      },
+                      child: SizedBox(
+                        width: _contentWidth,
+                        height: _contentHeight,
+                        child: RepaintBoundary(
+                          child: ListenableBuilder(
+                            listenable: _controller,
+                            builder: (context, _) {
+                              return ValueListenableBuilder<Matrix4>(
+                                valueListenable: _transform,
+                                builder: (context, matrix, _) {
+                                  final scale = matrix
+                                      .getMaxScaleOnAxis()
+                                      .clamp(_minScale, _maxScale);
+                                  return CustomPaint(
+                                    painter: _BeadCanvasPainter(
+                                      pattern: _controller.pattern,
+                                      cells: _controller.currentCells,
+                                      frameIndex: _controller.currentFrame,
+                                      revision: _controller.revision,
+                                      style: _controller.canvasStyle,
+                                      showGrid: _controller.showGrid,
+                                      cell: _cell,
+                                      screenCell: _cell * scale,
+                                      scale: scale,
+                                      visible: _visibleSceneRect(matrix),
+                                      hover: _hover,
+                                      tool: _controller.tool,
+                                      currentColor: _controller.currentColor,
+                                      dragStart: _dragStart,
+                                      dragEnd: _dragEnd,
+                                    ),
+                                    child: const SizedBox.expand(),
+                                  );
+                                },
+                              );
+                            },
                           ),
                         ),
                       ),
@@ -324,20 +407,23 @@ class _BeadCanvasState extends State<BeadCanvas> {
               Positioned(
                 right: 12,
                 bottom: 12,
-                child: _ZoomControls(
-                  scale: _scale,
-                  onZoomIn: () => _zoomBy(1.25),
-                  onZoomOut: () => _zoomBy(1 / 1.25),
-                  onFit: _fitToView,
+                child: ValueListenableBuilder<Matrix4>(
+                  valueListenable: _transform,
+                  builder: (context, matrix, _) => _ZoomControls(
+                    scale: matrix.getMaxScaleOnAxis(),
+                    onZoomIn: () => _zoomBy(1.25),
+                    onZoomOut: () => _zoomBy(1 / 1.25),
+                    onFit: _fitToView,
+                  ),
                 ),
               ),
               Positioned(
-                left: 12,
+                right: 12,
                 top: 12,
                 child: ListenableBuilder(
                   listenable: _controller,
                   builder: (context, _) {
-                    if (_controller.pattern.beadCount > 0) {
+                    if (_controller.currentBeadCount > 0) {
                       return const SizedBox.shrink();
                     }
                     return IgnorePointer(
@@ -435,6 +521,8 @@ class _ZoomControls extends StatelessWidget {
 class _BeadCanvasPainter extends CustomPainter {
   _BeadCanvasPainter({
     required this.pattern,
+    required this.cells,
+    required this.frameIndex,
     required this.revision,
     required this.style,
     required this.showGrid,
@@ -450,6 +538,8 @@ class _BeadCanvasPainter extends CustomPainter {
   });
 
   final BeadPattern pattern;
+  final Uint32List cells;
+  final int frameIndex;
   final int revision;
   final CanvasStyle style;
   final bool showGrid;
@@ -462,6 +552,8 @@ class _BeadCanvasPainter extends CustomPainter {
   final int currentColor;
   final (int, int)? dragStart;
   final (int, int)? dragEnd;
+
+  int _at(int x, int y) => cells[y * pattern.width + x];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -483,7 +575,7 @@ class _BeadCanvasPainter extends CustomPainter {
     final pegPaint = Paint()..color = const Color(0xFFE2D7C5);
     for (var y = startY; y <= endY; y++) {
       for (var x = startX; x <= endX; x++) {
-        final argb = pattern.cellAt(x, y);
+        final argb = _at(x, y);
         final rect = Rect.fromLTWH(x * cell, y * cell, cell, cell);
         if (argb == 0) {
           if (detailed && style == CanvasStyle.bead) {
@@ -703,6 +795,8 @@ class _BeadCanvasPainter extends CustomPainter {
   bool shouldRepaint(covariant _BeadCanvasPainter oldDelegate) =>
       oldDelegate.revision != revision ||
       oldDelegate.pattern != pattern ||
+      oldDelegate.frameIndex != frameIndex ||
+      !identical(oldDelegate.cells, cells) ||
       oldDelegate.style != style ||
       oldDelegate.showGrid != showGrid ||
       oldDelegate.cell != cell ||

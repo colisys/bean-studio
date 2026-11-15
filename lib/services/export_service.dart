@@ -22,6 +22,7 @@ class ExportService {
     required bool showLegend,
     required bool showHeader,
     BeadPalette? palette,
+    int frameIndex = 0,
   }) => renderPatternPng(
     pattern: pattern,
     style: style,
@@ -29,6 +30,7 @@ class ExportService {
     showLegend: showLegend,
     showHeader: showHeader,
     palette: palette,
+    frameIndex: frameIndex,
   );
 
   static Future<String?> saveFile({
@@ -71,9 +73,14 @@ class ExportService {
     return '$base$ext';
   }
 
-  static String materialsCsv(BeadPattern pattern, {BeadPalette? palette}) {
+  static String materialsCsv(
+    BeadPattern pattern, {
+    BeadPalette? palette,
+    int frameIndex = 0,
+  }) {
+    final frame = frameIndex.clamp(0, pattern.frameCount - 1);
     final buffer = StringBuffer('\uFEFF品牌,色号,名称,颜色,数量\n');
-    final entries = pattern.colorCounts.entries.toList()
+    final entries = pattern.colorCountsFor(frame).entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     for (final entry in entries) {
       final bead = findBeadForColor(entry.key, preferred: palette);
@@ -88,14 +95,22 @@ class ExportService {
     return buffer.toString();
   }
 
-  static String materialsText(BeadPattern pattern, {BeadPalette? palette}) {
+  static String materialsText(
+    BeadPattern pattern, {
+    BeadPalette? palette,
+    int frameIndex = 0,
+  }) {
+    final frame = frameIndex.clamp(0, pattern.frameCount - 1);
     final buffer = StringBuffer()
       ..writeln('拼豆工坊 · 材料清单')
       ..writeln('作品：${pattern.title}')
       ..writeln('尺寸：${pattern.width} × ${pattern.height}')
-      ..writeln('总计：${pattern.beadCount} 颗，${pattern.usedColorCount} 种颜色')
+      ..writeln(
+        '总计：${pattern.beadCountFor(frame)} 颗，'
+        '${pattern.usedColorCountFor(frame)} 种颜色',
+      )
       ..writeln();
-    final entries = pattern.colorCounts.entries.toList()
+    final entries = pattern.colorCountsFor(frame).entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     for (final entry in entries) {
       final bead = findBeadForColor(entry.key, preferred: palette);

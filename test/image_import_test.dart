@@ -92,5 +92,60 @@ void main() {
         isTrue,
       );
     });
+
+    test('fit modes honour an explicit target aspect ratio', () {
+      final source = img.Image(width: 8, height: 4, numChannels: 4);
+      img.fillRect(
+        source,
+        x1: 0,
+        y1: 0,
+        x2: 3,
+        y2: 3,
+        color: img.ColorRgba8(255, 0, 0, 255),
+      );
+      img.fillRect(
+        source,
+        x1: 4,
+        y1: 0,
+        x2: 7,
+        y2: 3,
+        color: img.ColorRgba8(0, 0, 255, 255),
+      );
+
+      final cover = ImageImportService.convert(
+        source,
+        title: 'cover',
+        settings: const ImageImportSettings(
+          width: 4,
+          height: 4,
+          fit: ImageFitMode.cover,
+        ),
+      );
+      final contain = ImageImportService.convert(
+        source,
+        title: 'contain',
+        settings: const ImageImportSettings(
+          width: 4,
+          height: 4,
+          fit: ImageFitMode.contain,
+        ),
+      );
+      final stretch = ImageImportService.convert(
+        source,
+        title: 'stretch',
+        settings: const ImageImportSettings(
+          width: 4,
+          height: 4,
+          fit: ImageFitMode.stretch,
+        ),
+      );
+
+      expect(cover.width, 4);
+      expect(cover.height, 4);
+      expect(cover.beadCount, 16);
+      expect(contain.beadCount, 8);
+      expect(stretch.beadCount, 16);
+      expect(cover.beadCount, isNot(contain.beadCount));
+    });
   });
 }

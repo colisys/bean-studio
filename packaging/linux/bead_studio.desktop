@@ -11,5 +11,5 @@ Terminal=false
 Categories=Graphics;Education;
 Keywords=perler;hama;bead;pixel;拼豆;
 StartupNotify=true
-StartupWMClass=org.beadstudio.bead_studio
+StartupWMClass=work.dawncall.bean
 X-AppImage-Version=@APP_VERSION@

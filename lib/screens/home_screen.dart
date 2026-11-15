@@ -2,6 +2,7 @@
 import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 
 import '../models/pattern.dart';
@@ -10,6 +11,7 @@ import '../services/project_store.dart';
 import '../theme.dart';
 import '../widgets/bead_logo.dart';
 import '../widgets/pattern_thumbnail.dart';
+import '../widgets/update_dialog.dart';
 import 'editor_screen.dart';
 import 'image_import_screen.dart';
 
@@ -179,7 +181,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: BeadLogo(size: 44),
       ),
       applicationLegalese:
-          '$appLicense\nCopyright (C) 2026 Bead Studio contributors',
+          '$appLicense\nCopyright (C) 2026 DawnCall\n$appWebsite',
       children: <Widget>[
         const SizedBox(height: 18),
         Text(
@@ -187,7 +189,18 @@ class _HomeScreenState extends State<HomeScreen> {
           '图片分享与摄像头拾色。',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.6),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => launchUrl(
+              Uri.parse(appWebsite),
+              mode: LaunchMode.externalApplication,
+            ),
+            icon: const Icon(Icons.public_rounded, size: 18),
+            label: const Text(appWebsite),
+          ),
+        ),
         Text(
           'MARD、Hama、Perler 色值为屏幕近似参考，实体豆子可能因批次略有差异，'
           '大批量购买前请以实物色卡为准。',
@@ -277,6 +290,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const Spacer(),
+        IconButton(
+          tooltip: '检查更新',
+          onPressed: () => showUpdateDialog(context),
+          icon: const Icon(Icons.system_update_alt_rounded),
+        ),
         IconButton(
           tooltip: '关于',
           onPressed: _showAbout,
@@ -557,6 +575,7 @@ class _HomeScreenState extends State<HomeScreen> {
           alignment: WrapAlignment.spaceBetween,
           children: <Widget>[
             Text('$appName · $appNameEn · $appVersionLabel', style: style),
+            Text(appWebsite, style: style),
             Text(appLicense, style: style),
             Text('色卡为屏幕近似值，请以实物为准', style: style),
           ],
@@ -674,6 +693,7 @@ class _ProjectCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     '${pattern.width} × ${pattern.height} · '
+                    '${pattern.frameCount > 1 ? '${pattern.frameCount} 帧 · ' : ''}'
                     '${pattern.beadCount} 颗 · ${_relativeTime(pattern.updatedAt)}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

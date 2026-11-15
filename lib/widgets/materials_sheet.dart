@@ -37,6 +37,7 @@ class _MaterialsSheet extends StatelessWidget {
     final text = ExportService.materialsText(
       controller.pattern,
       palette: controller.palette,
+      frameIndex: controller.currentFrame,
     );
     await Clipboard.setData(ClipboardData(text: text));
     if (context.mounted) _snack(context, '材料清单已复制');
@@ -47,6 +48,7 @@ class _MaterialsSheet extends StatelessWidget {
     final csv = ExportService.materialsCsv(
       pattern,
       palette: controller.palette,
+      frameIndex: controller.currentFrame,
     );
     final bytes = ExportService.textBytes(csv);
     final filename = ExportService.safeFilename(pattern.title, '.csv');
@@ -76,7 +78,7 @@ class _MaterialsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final pattern = controller.pattern;
-    final entries = pattern.colorCounts.entries.toList()
+    final entries = pattern.colorCountsFor(controller.currentFrame).entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return Material(
@@ -93,7 +95,8 @@ class _MaterialsSheet extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  '${pattern.beadCount} 颗 · ${pattern.usedColorCount} 色',
+                  '${controller.currentBeadCount} 颗 · ${controller.currentColorCount} 色'
+                  '${controller.frameCount > 1 ? ' · 帧 ${controller.currentFrame + 1}/${controller.frameCount}' : ''}',
                   style: TextStyle(
                     fontSize: 11.5,
                     color: scheme.onSurfaceVariant,
