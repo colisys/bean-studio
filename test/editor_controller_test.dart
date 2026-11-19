@@ -173,5 +173,72 @@ void main() {
       expect(controller.pattern.beadCount, 0);
       expect(controller.canUndo, isFalse);
     });
+
+    test('pen tap removes a bead matching the held colour', () {
+      final controller = _controller();
+      controller.selectColor(0xFF112233);
+      controller.beginStroke();
+      controller.paintAt(0, 0);
+      controller.paintAt(1, 0);
+      controller.endStroke();
+
+      controller.beginStroke();
+      controller.paintAt(0, 0);
+      controller.endStroke();
+      expect(controller.pattern.cellAt(0, 0), 0);
+      expect(controller.pattern.cellAt(1, 0), 0xFF112233);
+      expect(controller.pattern.beadCount, 1);
+
+      controller.undo();
+      expect(controller.pattern.cellAt(0, 0), 0xFF112233);
+    });
+
+    test('pen tap replaces a bead of another colour', () {
+      final controller = _controller();
+      controller.selectColor(0xFF112233);
+      controller.beginStroke();
+      controller.paintAt(0, 0);
+      controller.endStroke();
+
+      controller.selectColor(0xFF00FF00);
+      controller.beginStroke();
+      controller.paintAt(0, 0);
+      controller.endStroke();
+      expect(controller.pattern.cellAt(0, 0), 0xFF00FF00);
+    });
+
+    test('pen drag keeps the mode decided by the first touched cell', () {
+      final controller = _controller();
+      controller.selectColor(0xFF112233);
+      controller.beginStroke();
+      controller.paintSegment(0, 0, 3, 0);
+      controller.endStroke();
+
+      controller.beginStroke();
+      controller.paintAt(2, 0);
+      controller.paintSegment(2, 0, 0, 0);
+      controller.endStroke();
+      expect(controller.pattern.beadCount, 1);
+      expect(controller.pattern.cellAt(3, 0), 0xFF112233);
+
+      controller.undo();
+      expect(controller.pattern.beadCount, 4);
+
+      controller.selectColor(0xFF00FF00);
+      controller.beginStroke();
+      controller.paintAt(3, 0);
+      controller.paintSegment(3, 0, 0, 0);
+      controller.endStroke();
+      expect(controller.pattern.beadCount, 4);
+      expect(controller.pattern.cellAt(0, 0), 0xFF00FF00);
+
+      controller.selectColor(0xFF112233);
+      controller.beginStroke();
+      controller.paintAt(0, 1);
+      controller.paintSegment(0, 1, 3, 1);
+      controller.endStroke();
+      expect(controller.pattern.beadCount, 8);
+      expect(controller.pattern.cellAt(0, 0), 0xFF00FF00);
+    });
   });
 }
