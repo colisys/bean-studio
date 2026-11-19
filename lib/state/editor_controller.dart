@@ -234,11 +234,9 @@ class EditorController extends ChangeNotifier {
   void paintAt(int x, int y) {
     var color = tool == EditorTool.eraser ? 0 : currentColor;
     if (color != 0) {
-      if (_penStrokeErases == null) {
-        _penStrokeErases =
-            pattern.cellAt(x, y, frame: currentFrame) == currentColor;
-      }
-      if (_penStrokeErases) color = 0;
+      _penStrokeErases ??=
+          pattern.cellAt(x, y, frame: currentFrame) == currentColor;
+      if (_penStrokeErases == true) color = 0;
     }
     if (pattern.setCellAt(x, y, color, frame: currentFrame)) {
       revision++;
