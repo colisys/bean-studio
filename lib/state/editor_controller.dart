@@ -50,6 +50,12 @@ class EditorController extends ChangeNotifier {
   final List<PatternSnapshot> _undo = <PatternSnapshot>[];
   final List<PatternSnapshot> _redo = <PatternSnapshot>[];
   PatternSnapshot? _strokeSnapshot;
+
+  /// Whether the active pen stroke removes beads instead of painting. Decided
+  /// by the first cell the stroke touches: an occupied cell holding the
+  /// current colour starts an erasing stroke, anything else starts a painting
+  /// stroke that replaces cells.
+  bool? _penStrokeErases;
   bool _notifyScheduled = false;
   bool _disposed = false;
 
@@ -210,12 +216,14 @@ class EditorController extends ChangeNotifier {
   }
 
   void beginStroke() {
+    if (_strokeSnapshot == null) _penStrokeErases = null;
     _strokeSnapshot ??= pattern.snapshot();
   }
 
   void cancelStroke() {
     final before = _strokeSnapshot;
     _strokeSnapshot = null;
+    _penStrokeErases = null;
     if (before == null) return;
     if (pattern.matchesSnapshot(before)) return;
     pattern.restoreSnapshot(before);
@@ -224,7 +232,14 @@ class EditorController extends ChangeNotifier {
   }
 
   void paintAt(int x, int y) {
-    final color = tool == EditorTool.eraser ? 0 : currentColor;
+    var color = tool == EditorTool.eraser ? 0 : currentColor;
+    if (color != 0) {
+      if (_penStrokeErases == null) {
+        _penStrokeErases =
+            pattern.cellAt(x, y, frame: currentFrame) == currentColor;
+      }
+      if (_penStrokeErases) color = 0;
+    }
     if (pattern.setCellAt(x, y, color, frame: currentFrame)) {
       revision++;
       _notifySoon();
@@ -233,7 +248,8 @@ class EditorController extends ChangeNotifier {
 
   /// Paints an interpolated segment during a drag and coalesces the repaint.
   void paintSegment(int x0, int y0, int x1, int y1) {
-    final color = tool == EditorTool.eraser ? 0 : currentColor;
+    var color = tool == EditorTool.eraser ? 0 : currentColor;
+    if (color != 0 && _penStrokeErases == true) color = 0;
     var changed = false;
     for (final index in _lineIndexes(x0, y0, x1, y1)) {
       final x = index % pattern.width;
@@ -249,6 +265,7 @@ class EditorController extends ChangeNotifier {
   void endStroke() {
     final before = _strokeSnapshot;
     _strokeSnapshot = null;
+    _penStrokeErases = null;
     if (before == null) return;
     if (!pattern.matchesSnapshot(before)) {
       _pushUndo(before);

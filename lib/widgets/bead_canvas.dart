@@ -666,7 +666,8 @@ class _BeadCanvasPainter extends CustomPainter {
     final rect = Rect.fromLTWH(x * cell, y * cell, cell, cell);
     final isEraser = tool == EditorTool.eraser;
     if (tool == EditorTool.pen || isEraser) {
-      final fill = isEraser ? const Color(0xFFFFFFFF) : Color(currentColor);
+      final erases = isEraser || _at(x, y) == currentColor;
+      final fill = erases ? const Color(0xFFFFFFFF) : Color(currentColor);
       if (style == CanvasStyle.bead && screenCell >= 5) {
         canvas.drawCircle(
           rect.center,
