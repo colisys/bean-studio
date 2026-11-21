@@ -6,7 +6,7 @@ const String appNameEn = 'Bead Studio';
 const String appId = 'work.dawncall.bean';
 const String appWebsite = 'https://bean.dawncall.work';
 const String appRepository = 'colisys/bean-studio';
-const String appVersionBase = '1.0.1';
+const String appVersionBase = '1.0.2';
 const String appVersion = String.fromEnvironment(
   'APP_VERSION',
   defaultValue: appVersionBase,

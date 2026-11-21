@@ -108,7 +108,7 @@ flutter build linux --release
 # 需要先准备 appimagetool：
 # https://github.com/AppImage/appimagetool/releases
 APPIMAGETOOL=/path/to/appimagetool \
-  APP_VERSION=1.0.1+g$(git rev-parse --short=7 HEAD) \
+  APP_VERSION=1.0.2+g$(git rev-parse --short=7 HEAD) \
   ./packaging/linux/build_appimage.sh
 ```
 
@@ -130,7 +130,7 @@ AppImage 内置 Flutter 运行时与插件，但仍使用宿主机的 GTK 3 / GL
 - **macOS**：下载 DMG 并用系统默认方式打开，拖入“应用程序”覆盖旧版。
 - **iOS / Web / 其他无安装包平台**：打开发布页手动下载；iOS 仍需自行签名。
 
-“检查更新”使用当前应用版本（例如 `1.0.1+g1a2b3c4`）和最新 Release 的 `tag_name`
+“检查更新”使用当前应用版本（例如 `1.0.2+g1a2b3c4`）和最新 Release 的 `tag_name`
 比较，构建哈希不参与大小判断。GitHub API 未认证时有速率限制，失败时可直接打开发布页。
 
 ## GitHub Actions 多平台构建与发布
@@ -170,13 +170,13 @@ Release 会按提交查找最近一次成功的 Build Apps 运行，下载四个
 `SHA256SUMS`，并在需要时创建标签。若该提交没有成功构建，或 artifact 已超过 90 天，
 发布任务会报错；此时先在该 ref 上手动运行一次 Build Apps，再重新运行 Release。
 
-补标签发布复用原构建，因此产物版本仍是构建时的 `1.0.1+g<sha>`，标签不会改变已编译
+补标签发布复用原构建，因此产物版本仍是构建时的 `1.0.2+g<sha>`，标签不会改变已编译
 产物。如果希望产物版本等于标签的基础版本，请在该标签 ref 上手动运行 Build Apps，再
 运行 Release。
 
 ### 版本号
 
-版本号由基础版本和短 git 提交哈希组成，例如 `1.0.1+g1a2b3c4`；基础版本默认取自
+版本号由基础版本和短 git 提交哈希组成，例如 `1.0.2+g1a2b3c4`；基础版本默认取自
 `pubspec.yaml`。若手动在 `v1.2.3` 标签 ref 上运行 Build Apps，则以标签版本为准。CI
 运行号用作 Android `versionCode` / Apple `CFBundleVersion`。应用内“关于”对话框、
 首页页脚、Android 的 `versionName` 和产物文件名都会带上哈希。版本解析逻辑在

@@ -3,7 +3,7 @@ description: "拼豆工坊 — 拼豆图案编辑器 / Perler bead pattern studi
 homepage: https://bean.dawncall.work
 repository: https://github.com/colisys/bean-studio
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: ^3.14.0
